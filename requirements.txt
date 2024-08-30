@@ -99,7 +99,6 @@ psutil==5.9.8
 py-cpuinfo==9.0.0
 pyasn1==0.5.1
 pyasn1_modules==0.4.0
-PyBluez==0.23
 pycparser==2.21
 pydantic==2.8.2
 pydantic-extra-types==2.0.0
