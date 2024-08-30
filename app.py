@@ -167,11 +167,18 @@ async def check_user(email: EmailStr = Query(...), password: str = Query(...)):
         
         # Compare the provided password with the stored password
         if stored_password == password:
-            return {"status": "success", "message": "User authenticated"}
+            # Convert the MongoDB ObjectId to a string for JSON serialization
+            user["_id"] = str(user["_id"])
+            
+            # Remove the password from the response for security reasons
+            user.pop("password", None)
+            
+            return {"status": "success", "message": "User authenticated", "user_details": user}
         else:
             raise HTTPException(status_code=401, detail="Invalid password")
     else:
         raise HTTPException(status_code=404, detail="User not found")
+
     
 @app.get("/login_email/")
 async def login(email: EmailStr = Query(...)):
@@ -179,9 +186,12 @@ async def login(email: EmailStr = Query(...)):
     user = await user_collection.find_one({"email": email})
     
     if user:
-        return {"status": "success", "message": "User found", "user_id": user.get("user_id")}
+        # Convert the MongoDB ObjectId to a string for JSON serialization
+        user["_id"] = str(user["_id"])
+        return {"status": "success", "message": "User found", "user_details": user}
     else:
         raise HTTPException(status_code=404, detail="User not found")
+
     
 # @app.get("/auth/google/login")
 # async def google_login():
@@ -456,3 +466,16 @@ async def get_doctor_details(doctor_id: str, doctor_name: str):
     doctor_data = {key: doctor[key] for key in doctor if key != "_id"}
     
     return doctor_data
+
+
+@app.get("/patient/{patient_id}/")
+async def get_patient_details(patient_id: str):
+    # Iterate over all doctors to find the patient
+    async for doctor in doctor_Collection.find():
+        # Search through each doctor's assigned patients
+        for patient in doctor.get("patients_assigned", []):
+            if patient["patient_id"] == patient_id:
+                return patient
+    
+    # If no patient is found with the given patient_id
+    raise HTTPException(status_code=404, detail="Patient not found")
