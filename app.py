@@ -11,6 +11,8 @@ import httpx, os
 from authlib.integrations.starlette_client import OAuth
 from bson import ObjectId
 from google.oauth2 import id_token
+from pydantic import BaseModel, EmailStr, Field
+from pymongo.errors import DuplicateKeyError
 
 app = FastAPI()
 oauth = OAuth()
@@ -154,6 +156,33 @@ async def google_auth_callback(token_data: GoogleOAuthToken):
         print("Error:", str(e))
         raise HTTPException(status_code=400, detail=f"Invalid ID token or other error: {str(e)}")
     
+@app.get("/check_user/")
+async def check_user(email: EmailStr = Query(...), password: str = Query(...)):
+    # Query the database for the user by email
+    user = await user_collection.find_one({"email": email})
+    
+    if user:
+        # Get the stored password from the database
+        stored_password = user.get("password")
+        
+        # Compare the provided password with the stored password
+        if stored_password == password:
+            return {"status": "success", "message": "User authenticated"}
+        else:
+            raise HTTPException(status_code=401, detail="Invalid password")
+    else:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+@app.get("/login_email/")
+async def login(email: EmailStr = Query(...)):
+    # Query the database for the user by email
+    user = await user_collection.find_one({"email": email})
+    
+    if user:
+        return {"status": "success", "message": "User found", "user_id": user.get("user_id")}
+    else:
+        raise HTTPException(status_code=404, detail="User not found")
+    
 # @app.get("/auth/google/login")
 # async def google_login():
 #     # The URL to redirect the user to Google's OAuth 2.0 server
@@ -217,27 +246,35 @@ async def google_auth_callback(token_data: GoogleOAuthToken):
 
 @app.post("/users/")
 async def create_user(user: User):
+    # Check if email already exists
+    existing_user = await user_collection.find_one({"email": user.email})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already in use")
+
     # Generate the user_id based on the type
     user.user_id = await generate_user_id(user.type)
 
     # Convert the user model to a dictionary
     user_dict = user.dict()
 
-    # Insert the new user into the database
-    result = await user_collection.insert_one(user_dict)
+    try:
+        # Insert the new user into the database
+        result = await user_collection.insert_one(user_dict)
 
-    if result.inserted_id:
-        # If the user is a doctor, also create an entry in the Doctor collection
-        if user.type.lower() == "doctor":
-            doctor_data = Doctor(
-                user_id=user.user_id,
-                first_name=user.first_name
-            )
-            await doctor_Collection.insert_one(doctor_data.dict())
+        if result.inserted_id:
+            # If the user is a doctor, also create an entry in the Doctor collection
+            if user.type and user.type.lower() == "doctor":
+                doctor_data = Doctor(
+                    user_id=user.user_id,
+                    first_name=user.first_name
+                )
+                await doctor_Collection.insert_one(doctor_data.dict())
 
-        return {"message": "User created successfully", "user_id": user.user_id}
-    else:
-        raise HTTPException(status_code=500, detail="Error creating user")
+            return {"message": "User created successfully", "user_id": user.user_id}
+        else:
+            raise HTTPException(status_code=500, detail="Error creating user")
+    except DuplicateKeyError:
+        raise HTTPException(status_code=500, detail="Duplicate key error")
 
 
     
