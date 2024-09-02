@@ -286,7 +286,12 @@ async def create_user(user: User):
     except DuplicateKeyError:
         raise HTTPException(status_code=500, detail="Duplicate key error")
 
-
+@app.get("/users/{user_id}", response_model=User)
+async def get_user(user_id: str):
+    user_data = await user_collection.find_one({"user_id": user_id})
+    if user_data:
+        return User(**user_data)
+    raise HTTPException(status_code=404, detail="User not found")
     
 
 # @app.post("/exercise/")
