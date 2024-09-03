@@ -510,3 +510,47 @@ async def get_patient_details(patient_id: str):
     
     # If no patient is found with the given patient_id
     raise HTTPException(status_code=404, detail="Patient not found")
+
+
+@app.get("/exercises", response_model=List[ExerciseWithCategories])
+async def get_all_exercises():
+    try:
+        # Fetch all documents from the collection
+        documents = await exercise_collection.find().to_list(length=None)
+        
+        # Use a dictionary to keep track of unique exercises by exercise_id
+        unique_exercises = {}
+        
+        for document in documents:
+            for exercise in document.get("exercises", []):
+                # Add each exercise to the dictionary using exercise_id as the key
+                unique_exercises[exercise["exercise_name"]] = ExerciseWithCategories(
+                    exercise_id=exercise["exercise_id"],
+                    exercise_name=exercise["exercise_name"],
+                    description=exercise["description"]
+                )
+        
+        # Return the values of the dictionary as a list
+        return list(unique_exercises.values())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    
+@app.get("/categories", response_model=List[str])
+async def get_all_categories():
+    try:
+        # Fetch all documents from the collection
+        documents = await exercise_collection.find().to_list(length=None)
+        
+        # Use a set to keep track of unique categories
+        unique_categories = set()
+        
+        for document in documents:
+            category = document.get("category")
+            if category:
+                unique_categories.add(category)
+        
+        # Return the unique categories as a list
+        return list(unique_categories)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
