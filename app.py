@@ -554,3 +554,42 @@ async def get_all_categories():
         return list(unique_categories)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.put("/update_exercise_progress/")
+async def update_exercise_progress(
+    patient_id: str,
+    patient_name: str,
+    exercise_name: str,
+    exercise_progress: float
+):
+    # Find the doctor by iterating through patients
+    result = await doctor_Collection.update_one(
+        {
+            "patients_assigned": {
+                "$elemMatch": {
+                    "patient_id": patient_id,
+                    "patient_name": patient_name,
+                    "patient_exercises": {
+                        "$elemMatch": {
+                            "exercise_name": exercise_name
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "$set": {
+                "patients_assigned.$[p].patient_exercises.$[e].exercise_details.exercise_progress": exercise_progress
+            }
+        },
+        array_filters=[
+            {"p.patient_id": patient_id, "p.patient_name": patient_name},
+            {"e.exercise_name": exercise_name}
+        ]
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Patient or exercise not found")
+    
+    return {"status": "success", "message": "Exercise progress updated"}
