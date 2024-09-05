@@ -118,7 +118,7 @@ class ExercisesAssigned(BaseModel):
 class PatientDetails(BaseModel):
     patient_id: str
     patient_name: str
-    patient_exercises: ExercisesAssigned
+    patient_exercises: List[ExercisesAssigned]
 
 class Doctor(BaseModel):
     user_id: str
