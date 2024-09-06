@@ -451,38 +451,75 @@ async def assign_patient_to_doctor(doctor_id: str, doctor_name: str, patient: Pa
     if not isinstance(patient.patient_exercises, list):
         patient.patient_exercises = [patient.patient_exercises]
 
+    update_result = None  # Initialize update_result
+
     # Check if the patient already exists in the doctor's patients_assigned list
     patient_exists = False
     for idx, existing_patient in enumerate(doctor["patients_assigned"]):
-        if existing_patient["patient_id"] == patient.patient_id:
+        if existing_patient["patient_name"] == patient.patient_name:
             patient_exists = True
+            
+            # Prepare a list to keep track of exercises to update
+            updates = []
 
-            # Check if `patient_exercises` in the existing document is a list
-            if not isinstance(existing_patient.get("patient_exercises", []), list):
-                # Convert to list if not already
-                await doctor_Collection.update_one(
-                    {"user_id": doctor_id, "patients_assigned.patient_id": patient.patient_id},
-                    {"$set": {f"patients_assigned.{idx}.patient_exercises": [existing_patient["patient_exercises"]]}}
-                )
+            # Go through each new exercise and either update or add it
+            for new_exercise in patient.patient_exercises:
+                exercise_exists = False
+                for existing_exercise in existing_patient["patient_exercises"]:
+                    if existing_exercise["exercise_name"] == new_exercise.exercise_name:
+                        exercise_exists = True
+                        # Update the existing exercise details
+                        updates.append({
+                            "filter": {"$and": [
+                                {"patient_name": patient.patient_name},
+                                {"patient_exercises.exercise_name": new_exercise.exercise_name}
+                            ]},
+                            "update": {"$set": {f"patients_assigned.{idx}.patient_exercises.$.exercise_details": new_exercise.exercise_details.dict()}}
+                        })
+                        break
+                
+                if not exercise_exists:
+                    updates.append({
+                        "filter": {"user_id": doctor_id},
+                        "update": {"$push": {f"patients_assigned.{idx}.patient_exercises": new_exercise.dict()}}
+                    })
 
-            # Append the new exercises to the existing list
-            update_result = await doctor_Collection.update_one(
-                {"user_id": doctor_id, "patients_assigned.patient_id": patient.patient_id},
-                {"$push": {f"patients_assigned.{idx}.patient_exercises": {"$each": [exercise.dict() for exercise in patient.patient_exercises]}}}
-            )
+            # Execute all updates
+            for update in updates:
+                update_result = await doctor_Collection.update_one(update["filter"], update["update"])
+            
             break
 
     # If the patient does not exist, add them to the patients_assigned list
     if not patient_exists:
-        update_result = await doctor_Collection.update_one(
-            {"user_id": doctor_id},
-            {"$push": {"patients_assigned": patient.dict()}}
-        )
+        # Ensure no duplicate exercises are added
+        new_patient_exercises = []
+        for new_exercise in patient.patient_exercises:
+            exercise_exists = False
+            for existing_patient in doctor["patients_assigned"]:
+                if existing_patient["patient_name"] == patient.patient_name:
+                    for existing_exercise in existing_patient["patient_exercises"]:
+                        if existing_exercise["exercise_name"] == new_exercise.exercise_name:
+                            exercise_exists = True
+                            break
+                    if exercise_exists:
+                        break
 
-    if update_result.modified_count == 1:
+            if not exercise_exists:
+                new_patient_exercises.append(new_exercise.dict())
+
+        # Add patient with non-duplicate exercises
+        if new_patient_exercises:
+            update_result = await doctor_Collection.update_one(
+                {"user_id": doctor_id},
+                {"$push": {"patients_assigned": {**patient.dict(), "patient_exercises": new_patient_exercises}}}
+            )
+
+    if update_result and update_result.modified_count > 0:
         return {"message": f"Patient {patient.patient_name} and exercises assigned to Doctor {doctor_name}"}
     else:
         raise HTTPException(status_code=500, detail="Failed to assign patient or exercises")
+
     
 
 @app.get("/doctor/")
