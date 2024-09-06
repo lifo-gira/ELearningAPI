@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from models import GoogleOAuthToken, User, ExerciseWithCategories, CategoryWithExercises, AllCategoriesResponse, Exercise, ExerciseCategories, Doctor, PatientDetails
 from db import serialize_user, user_collection, exercise_collection ,generate_exercise_id, get_existing_exercise_id, doctor_Collection
@@ -13,9 +13,11 @@ from bson import ObjectId
 from google.oauth2 import id_token
 from pydantic import BaseModel, EmailStr, Field
 from pymongo.errors import DuplicateKeyError
+import random, asyncio
 
 app = FastAPI()
 oauth = OAuth()
+websocket_list: List[WebSocket] = []
 
 app.add_middleware(
     CORSMiddleware,
@@ -440,7 +442,7 @@ async def get_exercises_by_category(category: str = Query(..., description="The 
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/assign-patient/")
-async def assign_patient_to_doctor(doctor_id: str, doctor_name: str, patient: PatientDetails):
+async def assign_patient_to_doctor(doctor_id: str, doctor_name: str, patient: PatientDetails, background_tasks: BackgroundTasks):
     # Validate the existence of the doctor in the database
     doctor = await doctor_Collection.find_one({"user_id": doctor_id, "first_name": doctor_name})
 
@@ -516,6 +518,8 @@ async def assign_patient_to_doctor(doctor_id: str, doctor_name: str, patient: Pa
             )
 
     if update_result and update_result.modified_count > 0:
+        # Notify WebSocket clients
+        background_tasks.add_task(notify_clients, f"Patient {patient.patient_name} and exercises assigned to Doctor {doctor_name}")
         return {"message": f"Patient {patient.patient_name} and exercises assigned to Doctor {doctor_name}"}
     else:
         raise HTTPException(status_code=500, detail="Failed to assign patient or exercises")
@@ -600,7 +604,7 @@ async def update_exercise_progress(
     exercise_name: str,
     exercise_progress: float
 ):
-    # Find the doctor by iterating through patients
+    # Update the exercise progress in the database
     result = await doctor_Collection.update_one(
         {
             "patients_assigned": {
@@ -625,8 +629,49 @@ async def update_exercise_progress(
             {"e.exercise_name": exercise_name}
         ]
     )
-    
+
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Patient or exercise not found")
     
+    # Notify clients about the progress update
+    message = f"Exercise progress for patient {patient_name} updated to {exercise_progress}%."
+    await notify_clients(message)
+    
     return {"status": "success", "message": "Exercise progress updated"}
+
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    if websocket not in websocket_list:
+        websocket_list.append(websocket)
+    
+    try:
+        while True:
+            data = await websocket.receive_text()
+            for web in websocket_list:
+                if web != websocket:
+                    await web.send_text(data)
+    except WebSocketDisconnect:
+        websocket_list.remove(websocket)
+
+# Background task to send notifications
+async def notify_clients(message: str):
+    for websocket in websocket_list:
+        try:
+            await websocket.send_text(message)
+        except Exception as e:
+            print(f"Error sending message: {e}")
+
+# @app.websocket("/ws")
+# async def websocket_endpoint(websocket: WebSocket):
+#     print("HI")
+#     await websocket.accept()
+#     if websocket not in websocket_list:
+#         websocket_list.append(websocket)
+#     while True:
+#         data = await websocket.receive_text()
+#         for web in websocket_list:
+#             if web!=websocket:
+#                 await web.send_text(f"{data}")
